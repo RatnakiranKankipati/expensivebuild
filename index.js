@@ -1,1526 +1,1224 @@
-var __defProp = Object.defineProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-
 // server/index.ts
-import dotenv2 from "dotenv";
-import express4 from "express";
-import session from "express-session";
-import connectPgSimple from "connect-pg-simple";
-import cors from "cors";
+import express2 from "express";
 
 // server/routes.ts
 import { createServer } from "http";
 
 // shared/schema.ts
-var schema_exports = {};
-__export(schema_exports, {
-  categories: () => categories,
-  categoriesRelations: () => categoriesRelations,
-  expenseWallets: () => expenseWallets,
-  expenses: () => expenses,
-  expensesRelations: () => expensesRelations,
-  insertCategorySchema: () => insertCategorySchema,
-  insertExpenseSchema: () => insertExpenseSchema,
-  insertExpenseWalletSchema: () => insertExpenseWalletSchema,
-  insertUserSchema: () => insertUserSchema,
-  updateExpenseSchema: () => updateExpenseSchema,
-  updateExpenseWalletSchema: () => updateExpenseWalletSchema,
-  updateUserSchema: () => updateUserSchema,
-  users: () => users
-});
-import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, decimal, timestamp, integer } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, varchar, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var categories = pgTable("categories", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: text("name").notNull().unique(),
-  color: text("color").notNull().default("#3b82f6"),
-  description: text("description"),
-  isActive: integer("is_active").notNull().default(1)
-});
 var users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: text("email").notNull().unique(),
-  name: text("name").notNull(),
-  role: text("role").notNull().default("user"),
-  // "admin" or "user"
-  azureObjectId: text("azure_object_id").unique(),
-  isActive: integer("is_active").notNull().default(1),
-  lastLoginAt: timestamp("last_login_at"),
-  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`)
+  employeeId: text("employee_id").notNull().unique(),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  email: text("email").notNull(),
+  designation: text("designation").notNull(),
+  role: text("role").notNull().default("employee"),
+  // employee, hr, or manager
+  department: text("department").notNull()
 });
-var expenseWallets = pgTable("expense_wallets", {
+var workEntries = pgTable("work_entries", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-  description: text("description"),
-  date: timestamp("date").notNull(),
-  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`)
-});
-var expenses = pgTable("expenses", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  date: text("date").notNull(),
+  // YYYY-MM-DD format
+  workType: text("work_type").notNull(),
+  // Task, Project, Meeting, Skill-up, Partial Leave
   description: text("description").notNull(),
-  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-  categoryId: varchar("category_id").references(() => categories.id).notNull(),
-  vendor: text("vendor"),
-  date: timestamp("date").notNull(),
-  receiptPath: text("receipt_path"),
-  notes: text("notes"),
-  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`)
+  timeSpent: text("time_spent").notNull(),
+  // hours in decimal format
+  status: text("status").notNull().default("pending"),
+  // pending, approved, rejected
+  reviewedBy: varchar("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`)
 });
-var insertCategorySchema = createInsertSchema(categories).omit({
-  id: true,
-  isActive: true
+var managerPreferences = pgTable("manager_preferences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  managerId: varchar("manager_id").notNull(),
+  selectedEmployeeIds: text("selected_employee_ids").notNull(),
+  // JSON array of employee IDs
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`)
 });
-var insertExpenseWalletSchema = createInsertSchema(expenseWallets).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true
-}).extend({
-  amount: z.union([z.string(), z.number()]).transform((val) => {
-    const numVal = typeof val === "string" ? parseFloat(val) : val;
-    if (isNaN(numVal) || numVal <= 0) {
-      throw new Error("Amount must be a positive number");
-    }
-    return numVal;
-  }),
-  date: z.string().transform((val) => new Date(val))
-});
-var updateExpenseWalletSchema = insertExpenseWalletSchema.partial().extend({
-  id: z.string()
-});
-var insertExpenseSchema = createInsertSchema(expenses).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true
-}).extend({
-  date: z.string().transform((val) => new Date(val))
-});
-var updateExpenseSchema = insertExpenseSchema.partial().extend({
-  id: z.string()
+var workHourRequests = pgTable("work_hour_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  employeeId: varchar("employee_id").notNull(),
+  requestedDate: text("requested_date").notNull(),
+  // YYYY-MM-DD format
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("pending"),
+  // pending, approved, rejected
+  managerId: varchar("manager_id"),
+  managerComments: text("manager_comments"),
+  requestedAt: timestamp("requested_at").notNull().default(sql`now()`),
+  reviewedAt: timestamp("reviewed_at")
 });
 var insertUserSchema = createInsertSchema(users).omit({
+  id: true
+}).partial({
+  username: true,
+  password: true
+});
+var insertWorkEntrySchema = createInsertSchema(workEntries).omit({
+  id: true,
+  userId: true,
+  reviewedBy: true,
+  reviewedAt: true,
+  createdAt: true
+});
+var insertManagerPreferencesSchema = createInsertSchema(managerPreferences).omit({
   id: true,
   createdAt: true,
-  updatedAt: true,
-  lastLoginAt: true
+  updatedAt: true
 });
-var updateUserSchema = insertUserSchema.partial().extend({
-  id: z.string()
+var insertWorkHourRequestSchema = createInsertSchema(workHourRequests).omit({
+  id: true,
+  employeeId: true,
+  managerId: true,
+  managerComments: true,
+  requestedAt: true,
+  reviewedAt: true
 });
-var categoriesRelations = relations(categories, ({ many }) => ({
-  expenses: many(expenses)
-}));
-var expensesRelations = relations(expenses, ({ one }) => ({
-  category: one(categories, {
-    fields: [expenses.categoryId],
-    references: [categories.id]
-  })
-}));
+var updateWorkHourRequestSchema = z.object({
+  status: z.enum(["approved", "rejected"]),
+  managerComments: z.string().optional()
+});
+var updateWorkEntryStatusSchema = z.object({
+  status: z.enum(["approved", "rejected"])
+});
 
 // server/storage.ts
-import { randomUUID } from "crypto";
-
-// server/db.ts
-import { Pool, neonConfig } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-serverless";
-import ws from "ws";
+import { randomUUID, scrypt, randomBytes } from "crypto";
+import { promisify } from "util";
+import session from "express-session";
+import createMemoryStore from "memorystore";
+import { drizzle } from "drizzle-orm/neon-http";
+import { neon } from "@neondatabase/serverless";
+import { eq, and, gte, lte } from "drizzle-orm";
+import { sql as sql2 } from "drizzle-orm";
 import dotenv from "dotenv";
 dotenv.config();
-neonConfig.webSocketConstructor = ws;
-if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?"
-  );
+var scryptAsync = promisify(scrypt);
+async function hashPassword(password) {
+  const salt = randomBytes(16).toString("hex");
+  const buf = await scryptAsync(password, salt, 64);
+  return `${buf.toString("hex")}.${salt}`;
 }
-var pool = new Pool({ connectionString: process.env.DATABASE_URL });
-var db = drizzle({ client: pool, schema: schema_exports });
-
-// server/storage.ts
-import { eq, sql as sql2, desc, asc, and, gte, lte, lt, like, count, sum } from "drizzle-orm";
-var DatabaseStorage = class {
+var MemoryStore = createMemoryStore(session);
+var client = neon(process.env.DATABASE_URL);
+var db = drizzle(client);
+var DbStorage = class {
+  sessionStore;
   constructor() {
+    this.sessionStore = new MemoryStore({
+      checkPeriod: 864e5
+      // prune expired entries every 24h
+    });
+    this.seedData().catch(console.error);
   }
-  // Category operations
-  async getCategories() {
-    return await db.select().from(categories).where(eq(categories.isActive, 1));
-  }
-  async getCategoryById(id) {
-    const [category] = await db.select().from(categories).where(eq(categories.id, id));
-    return category || void 0;
-  }
-  async createCategory(category) {
-    const [newCategory] = await db.insert(categories).values(category).returning();
-    return newCategory;
-  }
-  async updateCategory(id, category) {
-    const [updated] = await db.update(categories).set(category).where(eq(categories.id, id)).returning();
-    return updated || void 0;
-  }
-  async deleteCategory(id) {
-    const [updated] = await db.update(categories).set({ isActive: 0 }).where(eq(categories.id, id)).returning();
-    return !!updated;
-  }
-  // Expense Wallet operations
-  async getExpenseWallets() {
-    return await db.select().from(expenseWallets).orderBy(desc(expenseWallets.createdAt));
-  }
-  async getCurrentExpenseWallet() {
-    const [wallet] = await db.select().from(expenseWallets).orderBy(desc(expenseWallets.updatedAt)).limit(1);
-    return wallet || void 0;
-  }
-  async createExpenseWallet(wallet) {
-    const [newWallet] = await db.insert(expenseWallets).values({
-      ...wallet,
-      amount: wallet.amount.toString()
-    }).returning();
-    return newWallet;
-  }
-  async updateExpenseWallet(id, wallet) {
-    const updateData = { ...wallet, updatedAt: /* @__PURE__ */ new Date() };
-    if (updateData.amount !== void 0) {
-      updateData.amount = updateData.amount.toString();
-    }
-    const [updated] = await db.update(expenseWallets).set(updateData).where(eq(expenseWallets.id, id)).returning();
-    return updated || void 0;
-  }
-  async deleteExpenseWallet(id) {
-    const result = await db.delete(expenseWallets).where(eq(expenseWallets.id, id));
-    return (result.rowCount ?? 0) > 0;
-  }
-  // Expense operations
-  async getExpenses(filters, sortBy = "date", sortOrder = "desc", limit = 50, offset = 0) {
-    const baseQuery = db.select({
-      id: expenses.id,
-      description: expenses.description,
-      amount: expenses.amount,
-      categoryId: expenses.categoryId,
-      vendor: expenses.vendor,
-      date: expenses.date,
-      receiptPath: expenses.receiptPath,
-      notes: expenses.notes,
-      createdAt: expenses.createdAt,
-      updatedAt: expenses.updatedAt,
-      category: {
-        id: categories.id,
-        name: categories.name,
-        color: categories.color,
-        description: categories.description,
-        isActive: categories.isActive
-      }
-    }).from(expenses).leftJoin(categories, eq(expenses.categoryId, categories.id));
-    const conditions = [];
-    if (filters) {
-      if (filters.search) {
-        conditions.push(
-          like(expenses.description, `%${filters.search}%`)
-        );
-      }
-      if (filters.categoryId) {
-        conditions.push(eq(expenses.categoryId, filters.categoryId));
-      }
-      if (filters.startDate) {
-        conditions.push(gte(expenses.date, new Date(filters.startDate)));
-      }
-      if (filters.endDate) {
-        conditions.push(lte(expenses.date, new Date(filters.endDate)));
-      }
-      if (filters.minAmount !== void 0) {
-        conditions.push(gte(expenses.amount, filters.minAmount.toString()));
-      }
-      if (filters.maxAmount !== void 0) {
-        conditions.push(lte(expenses.amount, filters.maxAmount.toString()));
+  async seedData() {
+    const existingUser = await this.getUserByEmail("navalika@fdestech.com");
+    if (!existingUser) {
+      const accounts = [
+        {
+          employeeId: "MGR002",
+          username: "navalika.fd",
+          password: "azure-auth",
+          firstName: "Navalika",
+          lastName: "FD",
+          email: "navalika@fdestech.com",
+          designation: "Operations Manager",
+          role: "manager",
+          department: "Management"
+        }
+      ];
+      for (const account of accounts) {
+        const hashedPassword = await hashPassword(account.password);
+        await db.insert(users).values({
+          ...account,
+          password: hashedPassword
+        });
       }
     }
-    const sortColumn = {
-      date: expenses.date,
-      amount: expenses.amount,
-      description: expenses.description,
-      category: categories.name
-    }[sortBy];
-    const orderFn = sortOrder === "asc" ? asc : desc;
-    if (conditions.length > 0) {
-      return await baseQuery.where(and(...conditions)).orderBy(orderFn(sortColumn)).limit(limit).offset(offset);
-    } else {
-      return await baseQuery.orderBy(orderFn(sortColumn)).limit(limit).offset(offset);
-    }
   }
-  async getExpenseById(id) {
-    const [expense] = await db.select({
-      id: expenses.id,
-      description: expenses.description,
-      amount: expenses.amount,
-      categoryId: expenses.categoryId,
-      vendor: expenses.vendor,
-      date: expenses.date,
-      receiptPath: expenses.receiptPath,
-      notes: expenses.notes,
-      createdAt: expenses.createdAt,
-      updatedAt: expenses.updatedAt,
-      category: {
-        id: categories.id,
-        name: categories.name,
-        color: categories.color,
-        description: categories.description,
-        isActive: categories.isActive
-      }
-    }).from(expenses).leftJoin(categories, eq(expenses.categoryId, categories.id)).where(eq(expenses.id, id));
-    return expense || void 0;
-  }
-  async createExpense(expense) {
-    const [newExpense] = await db.insert(expenses).values({
-      ...expense,
-      amount: expense.amount.toString()
-    }).returning();
-    return newExpense;
-  }
-  async updateExpense(id, expense) {
-    const updateData = { ...expense, updatedAt: /* @__PURE__ */ new Date() };
-    if (updateData.amount !== void 0 && updateData.amount !== null) {
-      updateData.amount = updateData.amount.toString();
-    }
-    const [updated] = await db.update(expenses).set(updateData).where(eq(expenses.id, id)).returning();
-    return updated || void 0;
-  }
-  async deleteExpense(id) {
-    const result = await db.delete(expenses).where(eq(expenses.id, id));
-    return (result.rowCount ?? 0) > 0;
-  }
-  async getExpensesCount(filters) {
-    const baseQuery = db.select({ count: count() }).from(expenses);
-    const conditions = [];
-    if (filters) {
-      if (filters.search) {
-        conditions.push(like(expenses.description, `%${filters.search}%`));
-      }
-      if (filters.categoryId) {
-        conditions.push(eq(expenses.categoryId, filters.categoryId));
-      }
-      if (filters.startDate) {
-        conditions.push(gte(expenses.date, new Date(filters.startDate)));
-      }
-      if (filters.endDate) {
-        conditions.push(lte(expenses.date, new Date(filters.endDate)));
-      }
-      if (filters.minAmount !== void 0) {
-        conditions.push(gte(expenses.amount, filters.minAmount.toString()));
-      }
-      if (filters.maxAmount !== void 0) {
-        conditions.push(lte(expenses.amount, filters.maxAmount.toString()));
-      }
-    }
-    if (conditions.length > 0) {
-      const [result] = await baseQuery.where(and(...conditions));
-      return result.count;
-    } else {
-      const [result] = await baseQuery;
-      return result.count;
-    }
-  }
-  // Analytics operations
-  async getWalletSummary() {
-    const [walletResult] = await db.select({ totalAmount: sum(expenseWallets.amount) }).from(expenseWallets);
-    const walletAmount = parseFloat(walletResult.totalAmount || "0");
-    const [expenseResult] = await db.select({ totalAmount: sum(expenses.amount) }).from(expenses);
-    const totalExpenses = parseFloat(expenseResult.totalAmount || "0");
-    const [countResult] = await db.select({ count: count() }).from(expenses);
-    const expenseCount = countResult.count;
-    const remainingAmount = walletAmount - totalExpenses;
-    const averageExpense = expenseCount > 0 ? totalExpenses / expenseCount : 0;
-    const percentageUsed = walletAmount > 0 ? totalExpenses / walletAmount * 100 : 0;
-    return {
-      walletAmount,
-      totalExpenses,
-      remainingAmount,
-      expenseCount,
-      averageExpense,
-      percentageUsed
-    };
-  }
-  async getWalletSummaryForMonth(month, year) {
-    const [walletResult] = await db.select({ totalAmount: sum(expenseWallets.amount) }).from(expenseWallets);
-    const totalWalletBalance = parseFloat(walletResult.totalAmount || "0");
-    const [allExpenseResult] = await db.select({ totalAmount: sum(expenses.amount) }).from(expenses);
-    const totalExpensesEver = parseFloat(allExpenseResult.totalAmount || "0");
-    const availableBalance = totalWalletBalance - totalExpensesEver;
-    const startOfMonth = new Date(year, month - 1, 1);
-    const nextMonthStart = new Date(year, month, 1);
-    const [monthlyExpenseResult] = await db.select({
-      totalAmount: sum(expenses.amount),
-      count: count()
-    }).from(expenses).where(and(
-      gte(expenses.date, startOfMonth),
-      // pass Date object
-      lt(expenses.date, nextMonthStart)
-    ));
-    const monthlyExpenseAmount = parseFloat(monthlyExpenseResult.totalAmount || "0");
-    const monthlyExpenseCount = monthlyExpenseResult.count;
-    const monthlyAverageExpense = monthlyExpenseCount > 0 ? monthlyExpenseAmount / monthlyExpenseCount : 0;
-    const monthlyPercentageUsed = totalWalletBalance > 0 ? monthlyExpenseAmount / totalWalletBalance * 100 : 0;
-    const currentDate = /* @__PURE__ */ new Date();
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const isCurrentMonth = currentDate.getMonth() === month - 1 && currentDate.getFullYear() === year;
-    let daysPassedForAverage = daysInMonth;
-    if (isCurrentMonth) {
-      daysPassedForAverage = Math.max(currentDate.getDate() - 1, 1);
-    }
-    const dailyAverage = daysPassedForAverage > 0 ? Math.round(monthlyExpenseAmount / daysPassedForAverage * 100) / 100 : 0;
-    let projectedTotal = monthlyExpenseAmount;
-    if (isCurrentMonth && currentDate.getDate() < daysInMonth) {
-      const remainingDays = daysInMonth - currentDate.getDate();
-      projectedTotal = Math.round((monthlyExpenseAmount + dailyAverage * remainingDays) * 100) / 100;
-    }
-    const currentYear = currentDate.getFullYear();
-    const daysLeft = isCurrentMonth ? daysInMonth - currentDate.getDate() : year > currentYear || year === currentYear && month > currentDate.getMonth() + 1 ? daysInMonth : 0;
-    return {
-      walletAmount: totalWalletBalance,
-      // Total wallet balance (all additions)
-      monthlyBudget: totalWalletBalance,
-      // Same as wallet amount for consistency
-      totalExpenses: monthlyExpenseAmount,
-      // Expenses for this month only
-      remainingAmount: availableBalance,
-      // Available balance after all expenses
-      expenseCount: monthlyExpenseCount,
-      // Count for this month only
-      averageExpense: monthlyAverageExpense,
-      // Average for this month only
-      percentageUsed: monthlyPercentageUsed,
-      // Monthly expenses vs total wallet
-      dailyAverage,
-      projectedTotal,
-      daysLeft
-    };
-  }
-  async getCategoryBreakdown(month, year) {
-    let query = db.select({
-      id: categories.id,
-      name: categories.name,
-      color: categories.color,
-      description: categories.description,
-      isActive: categories.isActive,
-      totalAmount: sum(expenses.amount),
-      expenseCount: count(expenses.id)
-    }).from(categories).leftJoin(expenses, eq(categories.id, expenses.categoryId)).where(eq(categories.isActive, 1)).groupBy(categories.id, categories.name, categories.color, categories.description, categories.isActive);
-    if (month && year) {
-      const startOfMonth = new Date(year, month - 1, 1);
-      const endOfMonth = new Date(year, month, 0);
-      query = db.select({
-        id: categories.id,
-        name: categories.name,
-        color: categories.color,
-        description: categories.description,
-        isActive: categories.isActive,
-        totalAmount: sum(expenses.amount),
-        expenseCount: count(expenses.id)
-      }).from(categories).leftJoin(expenses, and(
-        eq(categories.id, expenses.categoryId),
-        gte(expenses.date, startOfMonth),
-        lte(expenses.date, endOfMonth)
-      )).where(eq(categories.isActive, 1)).groupBy(categories.id, categories.name, categories.color, categories.description, categories.isActive);
-    }
-    const results = await query;
-    const totalAmount = results.reduce((sum2, cat) => sum2 + parseFloat(cat.totalAmount || "0"), 0);
-    return results.map((cat) => ({
-      ...cat,
-      totalAmount: parseFloat(cat.totalAmount || "0"),
-      percentage: totalAmount > 0 ? parseFloat(cat.totalAmount || "0") / totalAmount * 100 : 0
-    }));
-  }
-  async getExpenseTrends(days) {
-    const startDate = /* @__PURE__ */ new Date();
-    startDate.setDate(startDate.getDate() - days);
-    const results = await db.select({
-      date: sql2`DATE(${expenses.date})`,
-      amount: sum(expenses.amount)
-    }).from(expenses).where(gte(expenses.date, startDate)).groupBy(sql2`DATE(${expenses.date})`).orderBy(sql2`DATE(${expenses.date})`);
-    return results.map((result) => ({
-      date: result.date,
-      amount: parseFloat(result.amount || "0")
-    }));
-  }
-  async getMonthlyExpenseTrends(months) {
-    const startDate = /* @__PURE__ */ new Date();
-    startDate.setMonth(startDate.getMonth() - months);
-    startDate.setDate(1);
-    const results = await db.select({
-      month: sql2`TO_CHAR(${expenses.date}, 'YYYY-MM')`,
-      amount: sum(expenses.amount)
-    }).from(expenses).where(gte(expenses.date, startDate)).groupBy(sql2`TO_CHAR(${expenses.date}, 'YYYY-MM')`).orderBy(sql2`TO_CHAR(${expenses.date}, 'YYYY-MM')`);
-    return results.map((result) => ({
-      month: result.month,
-      amount: parseFloat(result.amount || "0")
-    }));
-  }
-  // User management methods
-  async getUsers() {
-    const result = await db.select().from(users).orderBy(desc(users.createdAt));
-    return result;
-  }
-  async getUserById(id) {
+  async getUser(id) {
     const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+    return result[0];
+  }
+  async getUserByUsername(username) {
+    const result = await db.select().from(users).where(eq(users.username, username)).limit(1);
     return result[0];
   }
   async getUserByEmail(email) {
     const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
     return result[0];
   }
-  async getUserByAzureObjectId(azureObjectId) {
-    const result = await db.select().from(users).where(eq(users.azureObjectId, azureObjectId)).limit(1);
+  async createUser(insertUser) {
+    const username = insertUser.username || `${insertUser.firstName.toLowerCase()}.${insertUser.lastName.toLowerCase()}`;
+    const password = insertUser.password || "defaultPassword123";
+    const hashedPassword = await hashPassword(password);
+    const userData = {
+      ...insertUser,
+      username,
+      password: hashedPassword,
+      role: insertUser.role || "employee"
+    };
+    const result = await db.insert(users).values(userData).returning();
     return result[0];
   }
-  async createUser(user) {
-    const newUser = {
-      ...user,
-      id: randomUUID(),
-      createdAt: /* @__PURE__ */ new Date(),
-      updatedAt: /* @__PURE__ */ new Date()
-    };
-    const [result] = await db.insert(users).values(newUser).returning();
-    return result;
+  async getAllUsers() {
+    return await db.select().from(users);
   }
-  async updateUser(id, user) {
-    const updateData = {
-      ...user,
-      updatedAt: /* @__PURE__ */ new Date()
-    };
-    const [result] = await db.update(users).set(updateData).where(eq(users.id, id)).returning();
-    return result;
-  }
-  async updateUserLastLogin(id) {
-    await db.update(users).set({
-      lastLoginAt: /* @__PURE__ */ new Date(),
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq(users.id, id));
+  async updateUser(id, updateData) {
+    const result = await db.update(users).set(updateData).where(eq(users.id, id)).returning();
+    return result[0];
   }
   async deleteUser(id) {
+    const user = await this.getUser(id);
+    if (!user) return false;
+    const allUsers = await this.getAllUsers();
+    const remainingUsers = allUsers.filter((u) => u.id !== id);
+    const hasManagersLeft = remainingUsers.some((u) => u.role === "manager");
+    if (user.role === "manager" && !hasManagersLeft) {
+      throw new Error("Cannot delete the last manager user");
+    }
     const result = await db.delete(users).where(eq(users.id, id));
-    return (result.rowCount ?? 0) > 0;
+    return true;
+  }
+  async createWorkEntry(data) {
+    const workEntryData = {
+      ...data,
+      status: "pending",
+      reviewedBy: null,
+      reviewedAt: null
+    };
+    const result = await db.insert(workEntries).values(workEntryData).returning();
+    return result[0];
+  }
+  async getWorkEntriesByUserId(userId) {
+    return await db.select().from(workEntries).where(eq(workEntries.userId, userId)).orderBy(sql2`${workEntries.date} DESC`);
+  }
+  async getWorkEntriesByUserIdWithFilters(filters) {
+    const conditions = [eq(workEntries.userId, filters.userId)];
+    if (filters.startDate) {
+      conditions.push(gte(workEntries.date, filters.startDate));
+    }
+    if (filters.endDate) {
+      conditions.push(lte(workEntries.date, filters.endDate));
+    }
+    return await db.select().from(workEntries).where(and(...conditions)).orderBy(sql2`${workEntries.date} DESC`);
+  }
+  async getAllWorkEntries() {
+    const result = await db.select({
+      id: workEntries.id,
+      userId: workEntries.userId,
+      date: workEntries.date,
+      workType: workEntries.workType,
+      description: workEntries.description,
+      timeSpent: workEntries.timeSpent,
+      status: workEntries.status,
+      reviewedBy: workEntries.reviewedBy,
+      reviewedAt: workEntries.reviewedAt,
+      createdAt: workEntries.createdAt,
+      user: {
+        id: users.id,
+        employeeId: users.employeeId,
+        username: users.username,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        designation: users.designation,
+        role: users.role,
+        department: users.department
+      }
+    }).from(workEntries).leftJoin(users, eq(workEntries.userId, users.id)).orderBy(sql2`${workEntries.date} DESC`);
+    return result.filter((entry) => entry.user);
+  }
+  async getWorkEntryById(id) {
+    const result = await db.select().from(workEntries).where(eq(workEntries.id, id)).limit(1);
+    return result[0];
+  }
+  async updateWorkEntryStatus(id, status, reviewedBy) {
+    const result = await db.update(workEntries).set({
+      status,
+      reviewedBy,
+      reviewedAt: /* @__PURE__ */ new Date()
+    }).where(eq(workEntries.id, id)).returning();
+    return result[0];
+  }
+  async deleteWorkEntry(id) {
+    await db.delete(workEntries).where(eq(workEntries.id, id));
+    return true;
+  }
+  async getWorkEntriesByFilters(filters) {
+    let query = db.select({
+      id: workEntries.id,
+      userId: workEntries.userId,
+      date: workEntries.date,
+      workType: workEntries.workType,
+      description: workEntries.description,
+      timeSpent: workEntries.timeSpent,
+      status: workEntries.status,
+      reviewedBy: workEntries.reviewedBy,
+      reviewedAt: workEntries.reviewedAt,
+      createdAt: workEntries.createdAt,
+      user: {
+        id: users.id,
+        employeeId: users.employeeId,
+        username: users.username,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        designation: users.designation,
+        role: users.role,
+        department: users.department
+      }
+    }).from(workEntries).leftJoin(users, eq(workEntries.userId, users.id));
+    const conditions = [];
+    if (filters.userId) {
+      conditions.push(eq(workEntries.userId, filters.userId));
+    }
+    if (filters.department) {
+      conditions.push(eq(users.department, filters.department));
+    }
+    if (filters.status) {
+      conditions.push(eq(workEntries.status, filters.status));
+    }
+    if (filters.startDate) {
+      conditions.push(gte(workEntries.date, filters.startDate));
+    }
+    if (filters.endDate) {
+      conditions.push(lte(workEntries.date, filters.endDate));
+    }
+    if (conditions.length > 0) {
+      const result2 = await query.where(and(...conditions)).orderBy(sql2`${workEntries.date} DESC`);
+      return result2.filter((entry) => entry.user);
+    }
+    const result = await query.orderBy(sql2`${workEntries.date} DESC`);
+    return result.filter((entry) => entry.user);
+  }
+  async getDailyWorkReport(userId, date) {
+    const entries = await db.select().from(workEntries).where(and(eq(workEntries.userId, userId), eq(workEntries.date, date)));
+    const totalHours = entries.reduce((sum, entry) => sum + parseFloat(entry.timeSpent), 0);
+    return {
+      date,
+      entries,
+      totalHours
+    };
+  }
+  // Manager preferences methods
+  async getManagerPreferences(managerId) {
+    const result = await db.select().from(managerPreferences).where(eq(managerPreferences.managerId, managerId)).limit(1);
+    return result[0];
+  }
+  async saveManagerPreferences(preferences) {
+    const result = await db.insert(managerPreferences).values(preferences).returning();
+    return result[0];
+  }
+  async updateManagerPreferences(managerId, selectedEmployeeIds) {
+    const existing = await this.getManagerPreferences(managerId);
+    if (existing) {
+      const result = await db.update(managerPreferences).set({
+        selectedEmployeeIds: JSON.stringify(selectedEmployeeIds),
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq(managerPreferences.id, existing.id)).returning();
+      return result[0];
+    } else {
+      return this.saveManagerPreferences({
+        managerId,
+        selectedEmployeeIds: JSON.stringify(selectedEmployeeIds)
+      });
+    }
+  }
+  // Work hour request methods
+  async createWorkHourRequest(request) {
+    const result = await db.insert(workHourRequests).values(request).returning();
+    return result[0];
+  }
+  async getWorkHourRequestsByEmployeeId(employeeId) {
+    const result = await db.select({
+      id: workHourRequests.id,
+      employeeId: workHourRequests.employeeId,
+      requestedDate: workHourRequests.requestedDate,
+      reason: workHourRequests.reason,
+      status: workHourRequests.status,
+      managerId: workHourRequests.managerId,
+      managerComments: workHourRequests.managerComments,
+      requestedAt: workHourRequests.requestedAt,
+      reviewedAt: workHourRequests.reviewedAt,
+      employee: {
+        id: users.id,
+        employeeId: users.employeeId,
+        username: users.username,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        designation: users.designation,
+        role: users.role,
+        department: users.department
+      }
+    }).from(workHourRequests).leftJoin(users, eq(workHourRequests.employeeId, users.id)).where(eq(workHourRequests.employeeId, employeeId)).orderBy(sql2`${workHourRequests.requestedAt} DESC`);
+    return result.filter((req) => req.employee);
+  }
+  async getWorkHourRequestsByManagerId(managerId) {
+    const result = await db.select({
+      id: workHourRequests.id,
+      employeeId: workHourRequests.employeeId,
+      requestedDate: workHourRequests.requestedDate,
+      reason: workHourRequests.reason,
+      status: workHourRequests.status,
+      managerId: workHourRequests.managerId,
+      managerComments: workHourRequests.managerComments,
+      requestedAt: workHourRequests.requestedAt,
+      reviewedAt: workHourRequests.reviewedAt,
+      employee: {
+        id: users.id,
+        employeeId: users.employeeId,
+        username: users.username,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        designation: users.designation,
+        role: users.role,
+        department: users.department
+      }
+    }).from(workHourRequests).leftJoin(users, eq(workHourRequests.employeeId, users.id)).where(eq(workHourRequests.status, "pending")).orderBy(sql2`${workHourRequests.requestedAt} DESC`);
+    return result.filter((req) => req.employee);
+  }
+  async getAllWorkHourRequests() {
+    const result = await db.select({
+      id: workHourRequests.id,
+      employeeId: workHourRequests.employeeId,
+      requestedDate: workHourRequests.requestedDate,
+      reason: workHourRequests.reason,
+      status: workHourRequests.status,
+      managerId: workHourRequests.managerId,
+      managerComments: workHourRequests.managerComments,
+      requestedAt: workHourRequests.requestedAt,
+      reviewedAt: workHourRequests.reviewedAt,
+      employee: {
+        id: users.id,
+        employeeId: users.employeeId,
+        username: users.username,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        designation: users.designation,
+        role: users.role,
+        department: users.department
+      }
+    }).from(workHourRequests).leftJoin(users, eq(workHourRequests.employeeId, users.id)).orderBy(sql2`${workHourRequests.requestedAt} DESC`);
+    return result.filter((req) => req.employee);
+  }
+  async getWorkHourRequestById(id) {
+    const result = await db.select({
+      id: workHourRequests.id,
+      employeeId: workHourRequests.employeeId,
+      requestedDate: workHourRequests.requestedDate,
+      reason: workHourRequests.reason,
+      status: workHourRequests.status,
+      managerId: workHourRequests.managerId,
+      managerComments: workHourRequests.managerComments,
+      requestedAt: workHourRequests.requestedAt,
+      reviewedAt: workHourRequests.reviewedAt,
+      employee: {
+        id: users.id,
+        employeeId: users.employeeId,
+        username: users.username,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        designation: users.designation,
+        role: users.role,
+        department: users.department
+      }
+    }).from(workHourRequests).leftJoin(users, eq(workHourRequests.employeeId, users.id)).where(eq(workHourRequests.id, id)).limit(1);
+    const req = result[0];
+    return req?.employee ? req : void 0;
+  }
+  async updateWorkHourRequest(id, updates) {
+    const updateData = {
+      status: updates.status,
+      reviewedAt: /* @__PURE__ */ new Date()
+    };
+    if (updates.managerId) {
+      updateData.managerId = updates.managerId;
+    }
+    if (updates.managerComments) {
+      updateData.managerComments = updates.managerComments;
+    }
+    const result = await db.update(workHourRequests).set(updateData).where(eq(workHourRequests.id, id)).returning();
+    return result[0];
+  }
+  async deleteWorkHourRequest(id) {
+    const result = await db.delete(workHourRequests).where(eq(workHourRequests.id, id));
+    return result.rowCount > 0;
+  }
+  // Legacy methods for backward compatibility
+  async createTimesheet(timesheet) {
+    return this.createWorkEntry(timesheet);
+  }
+  async getTimesheetsByUserId(userId) {
+    return this.getWorkEntriesByUserId(userId);
+  }
+  async getAllTimesheets() {
+    return this.getAllWorkEntries();
+  }
+  async getTimesheetById(id) {
+    return this.getWorkEntryById(id);
+  }
+  async updateTimesheetStatus(id, status, reviewedBy) {
+    return this.updateWorkEntryStatus(id, status, reviewedBy);
+  }
+  async deleteTimesheet(id) {
+    return this.deleteWorkEntry(id);
+  }
+  async getTimesheetsByFilters(filters) {
+    return this.getWorkEntriesByFilters(filters);
   }
 };
-var storage = new DatabaseStorage();
+var storage = new DbStorage();
 
-// server/objectStorage.ts
-import { Storage } from "@google-cloud/storage";
-import { randomUUID as randomUUID2 } from "crypto";
+// server/routes.ts
+import { z as z2 } from "zod";
 
-// server/objectAcl.ts
-var ACL_POLICY_METADATA_KEY = "custom:aclPolicy";
-function isPermissionAllowed(requested, granted) {
-  if (requested === "read" /* READ */) {
-    return ["read" /* READ */, "write" /* WRITE */].includes(granted);
-  }
-  return granted === "write" /* WRITE */;
+// server/auth.ts
+import passport from "passport";
+import { Strategy as LocalStrategy } from "passport-local";
+import session2 from "express-session";
+import { scrypt as scrypt2, randomBytes as randomBytes2, timingSafeEqual } from "crypto";
+import { promisify as promisify2 } from "util";
+function sanitizeUser(user) {
+  const { password, ...publicUser } = user;
+  return publicUser;
 }
-function createObjectAccessGroup(group) {
-  switch (group.type) {
-    // Implement the case for each type of access group to instantiate.
-    //
-    // For example:
-    // case "USER_LIST":
-    //   return new UserListAccessGroup(group.id);
-    // case "EMAIL_DOMAIN":
-    //   return new EmailDomainAccessGroup(group.id);
-    // case "GROUP_MEMBER":
-    //   return new GroupMemberAccessGroup(group.id);
-    // case "SUBSCRIBER":
-    //   return new SubscriberAccessGroup(group.id);
-    default:
-      throw new Error(`Unknown access group type: ${group.type}`);
-  }
+var scryptAsync2 = promisify2(scrypt2);
+async function hashPassword2(password) {
+  const salt = randomBytes2(16).toString("hex");
+  const buf = await scryptAsync2(password, salt, 64);
+  return `${buf.toString("hex")}.${salt}`;
 }
-async function setObjectAclPolicy(objectFile, aclPolicy) {
-  const [exists] = await objectFile.exists();
-  if (!exists) {
-    throw new Error(`Object not found: ${objectFile.name}`);
-  }
-  await objectFile.setMetadata({
-    metadata: {
-      [ACL_POLICY_METADATA_KEY]: JSON.stringify(aclPolicy)
+async function comparePasswords(supplied, stored) {
+  const [hashed, salt] = stored.split(".");
+  const hashedBuf = Buffer.from(hashed, "hex");
+  const suppliedBuf = await scryptAsync2(supplied, salt, 64);
+  return timingSafeEqual(hashedBuf, suppliedBuf);
+}
+function setupAuth(app2) {
+  const sessionSettings = {
+    secret: process.env.SESSION_SECRET || "dev-secret-key-change-in-production",
+    resave: false,
+    saveUninitialized: false,
+    store: storage.sessionStore
+  };
+  app2.set("trust proxy", 1);
+  app2.use(session2(sessionSettings));
+  app2.use(passport.initialize());
+  app2.use(passport.session());
+  passport.use(
+    new LocalStrategy(async (username, password, done) => {
+      const user = await storage.getUserByUsername(username);
+      if (!user || !await comparePasswords(password, user.password)) {
+        return done(null, false);
+      } else {
+        return done(null, user);
+      }
+    })
+  );
+  passport.serializeUser((user, done) => done(null, user.id));
+  passport.deserializeUser(async (id, done) => {
+    try {
+      const user = await storage.getUser(id);
+      if (user) {
+        done(null, user);
+      } else {
+        done(null, false);
+      }
+    } catch (error) {
+      console.error("Error deserializing user:", error);
+      done(null, false);
     }
   });
-}
-async function getObjectAclPolicy(objectFile) {
-  const [metadata] = await objectFile.getMetadata();
-  const aclPolicy = metadata?.metadata?.[ACL_POLICY_METADATA_KEY];
-  if (!aclPolicy) {
-    return null;
-  }
-  return JSON.parse(aclPolicy);
-}
-async function canAccessObject({
-  userId,
-  objectFile,
-  requestedPermission
-}) {
-  const aclPolicy = await getObjectAclPolicy(objectFile);
-  if (!aclPolicy) {
-    return false;
-  }
-  if (aclPolicy.visibility === "public" && requestedPermission === "read" /* READ */) {
-    return true;
-  }
-  if (!userId) {
-    return false;
-  }
-  if (aclPolicy.owner === userId) {
-    return true;
-  }
-  for (const rule of aclPolicy.aclRules || []) {
-    const accessGroup = createObjectAccessGroup(rule.group);
-    if (await accessGroup.hasMember(userId) && isPermissionAllowed(requestedPermission, rule.permission)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// server/objectStorage.ts
-var REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
-var objectStorageClient = new Storage({
-  credentials: {
-    audience: "replit",
-    subject_token_type: "access_token",
-    token_url: `${REPLIT_SIDECAR_ENDPOINT}/token`,
-    type: "external_account",
-    credential_source: {
-      url: `${REPLIT_SIDECAR_ENDPOINT}/credential`,
-      format: {
-        type: "json",
-        subject_token_field_name: "access_token"
-      }
-    },
-    universe_domain: "googleapis.com"
-  },
-  projectId: ""
-});
-var ObjectNotFoundError = class _ObjectNotFoundError extends Error {
-  constructor() {
-    super("Object not found");
-    this.name = "ObjectNotFoundError";
-    Object.setPrototypeOf(this, _ObjectNotFoundError.prototype);
-  }
-};
-var ObjectStorageService = class {
-  constructor() {
-  }
-  // Gets the public object search paths.
-  getPublicObjectSearchPaths() {
-    const pathsStr = process.env.PUBLIC_OBJECT_SEARCH_PATHS || "";
-    const paths = Array.from(
-      new Set(
-        pathsStr.split(",").map((path4) => path4.trim()).filter((path4) => path4.length > 0)
-      )
-    );
-    if (paths.length === 0) {
-      throw new Error(
-        "PUBLIC_OBJECT_SEARCH_PATHS not set. Create a bucket in 'Object Storage' tool and set PUBLIC_OBJECT_SEARCH_PATHS env var (comma-separated paths)."
-      );
-    }
-    return paths;
-  }
-  // Gets the private object directory.
-  getPrivateObjectDir() {
-    const dir = process.env.PRIVATE_OBJECT_DIR || "server/uploads/private";
-    if (!dir) {
-      throw new Error(
-        "PRIVATE_OBJECT_DIR not set. Create a bucket in 'Object Storage' tool and set PRIVATE_OBJECT_DIR env var."
-      );
-    }
-    return dir;
-  }
-  // Search for a public object from the search paths.
-  async searchPublicObject(filePath) {
-    for (const searchPath of this.getPublicObjectSearchPaths()) {
-      const fullPath = `${searchPath}/${filePath}`;
-      const { bucketName, objectName } = parseObjectPath(fullPath);
-      const bucket = objectStorageClient.bucket(bucketName);
-      const file = bucket.file(objectName);
-      const [exists] = await file.exists();
-      if (exists) {
-        return file;
-      }
-    }
-    return null;
-  }
-  // Downloads an object to the response.
-  async downloadObject(file, res, cacheTtlSec = 3600) {
+  app2.post("/api/register", async (req, res, next) => {
     try {
-      const [metadata] = await file.getMetadata();
-      const aclPolicy = await getObjectAclPolicy(file);
-      const isPublic = aclPolicy?.visibility === "public";
-      res.set({
-        "Content-Type": metadata.contentType || "application/octet-stream",
-        "Content-Length": metadata.size,
-        "Cache-Control": `${isPublic ? "public" : "private"}, max-age=${cacheTtlSec}`
+      const existingUser = await storage.getUserByUsername(req.body.username);
+      if (existingUser) {
+        return res.status(400).send("Username already exists");
+      }
+      const validatedData = insertUserSchema.parse({
+        ...req.body,
+        role: "employee"
+        // Always set role to employee, ignore client input
       });
-      const stream = file.createReadStream();
-      stream.on("error", (err) => {
-        console.error("Stream error:", err);
-        if (!res.headersSent) {
-          res.status(500).json({ error: "Error streaming file" });
-        }
+      if (!validatedData.password) {
+        return res.status(400).send("Password is required");
+      }
+      const user = await storage.createUser({
+        ...validatedData,
+        password: await hashPassword2(validatedData.password)
       });
-      stream.pipe(res);
+      req.login(user, (err) => {
+        if (err) return next(err);
+        res.status(201).json(sanitizeUser(user));
+      });
     } catch (error) {
-      console.error("Error downloading file:", error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Error downloading file" });
-      }
+      res.status(500).send("Registration failed");
     }
-  }
-  // Gets the upload URL for an object entity.
-  async getObjectEntityUploadURL() {
-    const privateObjectDir = this.getPrivateObjectDir();
-    if (!privateObjectDir) {
-      throw new Error(
-        "PRIVATE_OBJECT_DIR not set. Create a bucket in 'Object Storage' tool and set PRIVATE_OBJECT_DIR env var."
-      );
-    }
-    const objectId = randomUUID2();
-    const fullPath = `${privateObjectDir}/uploads/${objectId}`;
-    const { bucketName, objectName } = parseObjectPath(fullPath);
-    return signObjectURL({
-      bucketName,
-      objectName,
-      method: "PUT",
-      ttlSec: 900
+  });
+  app2.post("/api/login", passport.authenticate("local"), (req, res) => {
+    res.status(200).json(sanitizeUser(req.user));
+  });
+  app2.post("/api/logout", (req, res, next) => {
+    req.logout((err) => {
+      if (err) return next(err);
+      res.sendStatus(200);
     });
-  }
-  // Gets the object entity file from the object path.
-  async getObjectEntityFile(objectPath) {
-    if (!objectPath.startsWith("/objects/")) {
-      throw new ObjectNotFoundError();
-    }
-    const parts = objectPath.slice(1).split("/");
-    if (parts.length < 2) {
-      throw new ObjectNotFoundError();
-    }
-    const entityId = parts.slice(1).join("/");
-    let entityDir = this.getPrivateObjectDir();
-    if (!entityDir.endsWith("/")) {
-      entityDir = `${entityDir}/`;
-    }
-    const objectEntityPath = `${entityDir}${entityId}`;
-    const { bucketName, objectName } = parseObjectPath(objectEntityPath);
-    const bucket = objectStorageClient.bucket(bucketName);
-    const objectFile = bucket.file(objectName);
-    const [exists] = await objectFile.exists();
-    if (!exists) {
-      throw new ObjectNotFoundError();
-    }
-    return objectFile;
-  }
-  normalizeObjectEntityPath(rawPath) {
-    if (!rawPath.startsWith("https://storage.googleapis.com/")) {
-      return rawPath;
-    }
-    const url = new URL(rawPath);
-    const rawObjectPath = url.pathname;
-    let objectEntityDir = this.getPrivateObjectDir();
-    if (!objectEntityDir.endsWith("/")) {
-      objectEntityDir = `${objectEntityDir}/`;
-    }
-    if (!rawObjectPath.startsWith(objectEntityDir)) {
-      return rawObjectPath;
-    }
-    const entityId = rawObjectPath.slice(objectEntityDir.length);
-    return `/objects/${entityId}`;
-  }
-  // Tries to set the ACL policy for the object entity and return the normalized path.
-  async trySetObjectEntityAclPolicy(rawPath, aclPolicy) {
-    const normalizedPath = this.normalizeObjectEntityPath(rawPath);
-    if (!normalizedPath.startsWith("/")) {
-      return normalizedPath;
-    }
-    const objectFile = await this.getObjectEntityFile(normalizedPath);
-    await setObjectAclPolicy(objectFile, aclPolicy);
-    return normalizedPath;
-  }
-  // Checks if the user can access the object entity.
-  async canAccessObjectEntity({
-    userId,
-    objectFile,
-    requestedPermission
-  }) {
-    return canAccessObject({
-      userId,
-      objectFile,
-      requestedPermission: requestedPermission ?? "read" /* READ */
-    });
-  }
-};
-function parseObjectPath(path4) {
-  if (!path4.startsWith("/")) {
-    path4 = `/${path4}`;
-  }
-  const pathParts = path4.split("/");
-  if (pathParts.length < 3) {
-    throw new Error("Invalid path: must contain at least a bucket name");
-  }
-  const bucketName = pathParts[1];
-  const objectName = pathParts.slice(2).join("/");
-  return {
-    bucketName,
-    objectName
-  };
-}
-async function signObjectURL({
-  bucketName,
-  objectName,
-  method,
-  ttlSec
-}) {
-  const request = {
-    bucket_name: bucketName,
-    object_name: objectName,
-    method,
-    expires_at: new Date(Date.now() + ttlSec * 1e3).toISOString()
-  };
-  const response = await fetch(
-    `${REPLIT_SIDECAR_ENDPOINT}/object-storage/signed-object-url`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(request)
-    }
-  );
-  if (!response.ok) {
-    throw new Error(
-      `Failed to sign object URL, errorcode: ${response.status}, make sure you're running on Replit`
-    );
-  }
-  const { signed_url: signedURL } = await response.json();
-  return signedURL;
+  });
+  app2.get("/api/user", (req, res) => {
+    console.log("my req", req);
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    res.json(sanitizeUser(req.user));
+  });
 }
 
-// server/excelImport.ts
-import XLSX from "xlsx";
-async function parseExcelFile(filePath) {
-  try {
-    const workbook = XLSX.readFile(filePath);
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const rawData = XLSX.utils.sheet_to_json(worksheet);
-    console.log("Raw Excel data:", rawData);
-    console.log("Sample row:", rawData[0]);
-    return rawData;
-  } catch (error) {
-    console.error("Error parsing Excel file:", error);
-    throw new Error("Failed to parse Excel file");
-  }
-}
-async function mapExcelRowToExpense(row, categories2) {
-  const mappings = {
-    date: ["date", "Date", "DATE", "expense_date", "Expense Date"],
-    description: ["description", "Description", "DESCRIPTION", "expense_description", "Expense Description", "item", "Item"],
-    amount: ["amount", "Amount", "AMOUNT", "expense_amount", "Expense Amount", "cost", "Cost", "price", "Price"],
-    category: ["category", "Category", "CATEGORY", "expense_category", "Expense Category", "type", "Type"],
-    vendor: ["vendor", "Vendor", "VENDOR", "supplier", "Supplier", "merchant", "Merchant"],
-    notes: ["notes", "Notes", "NOTES", "comments", "Comments", "remarks", "Remarks"]
-  };
-  const mappedData = {};
-  for (const [field, possibleKeys] of Object.entries(mappings)) {
-    for (const key of possibleKeys) {
-      if (row[key] !== void 0 && row[key] !== null && row[key] !== "") {
-        mappedData[field] = row[key];
-        break;
-      }
-    }
-  }
-  if (mappedData.date) {
-    try {
-      let dateValue;
-      if (typeof mappedData.date === "number") {
-        const excelDate = new Date((mappedData.date - 25569) * 86400 * 1e3);
-        dateValue = excelDate.toISOString().split("T")[0];
-      } else {
-        const date = new Date(mappedData.date);
-        dateValue = date.toISOString().split("T")[0];
-      }
-      mappedData.date = dateValue;
-    } catch (error) {
-      mappedData.date = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-    }
-  } else {
-    mappedData.date = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  }
-  if (mappedData.amount) {
-    const amountStr = String(mappedData.amount).replace(/[₹,\s]/g, "");
-    mappedData.amount = amountStr;
-  }
-  if (mappedData.category) {
-    const categoryName = String(mappedData.category).trim();
-    const matchedCategory = categories2.find(
-      (cat) => cat.name.toLowerCase() === categoryName.toLowerCase()
-    );
-    if (matchedCategory) {
-      mappedData.categoryId = matchedCategory.id;
-    } else {
-      try {
-        const newCategory = await storage.createCategory({ name: categoryName });
-        mappedData.categoryId = newCategory.id;
-        categories2.push(newCategory);
-      } catch (error) {
-        console.error("Failed to create category:", categoryName, error);
-        mappedData.categoryId = categories2[0]?.id;
-      }
-    }
-  } else {
-    mappedData.categoryId = categories2[0]?.id;
-  }
-  if (!mappedData.description) {
-    mappedData.description = "Imported expense";
-  }
-  if (!mappedData.amount) {
-    mappedData.amount = "0";
-  }
-  return mappedData;
-}
-async function importExpensesFromExcel(filePath) {
-  try {
-    const rawData = await parseExcelFile(filePath);
-    if (!rawData || rawData.length === 0) {
-      throw new Error("No data found in Excel file");
-    }
-    const categories2 = await storage.getCategories();
-    const importResults = {
-      total: rawData.length,
-      successful: 0,
-      failed: 0,
-      errors: []
-    };
-    for (let i = 0; i < rawData.length; i++) {
-      try {
-        const row = rawData[i];
-        const mappedExpense = await mapExcelRowToExpense(row, categories2);
-        const validatedExpense = insertExpenseSchema.parse(mappedExpense);
-        await storage.createExpense(validatedExpense);
-        importResults.successful++;
-      } catch (error) {
-        console.error(`Failed to import row ${i + 1}:`, error);
-        importResults.failed++;
-        importResults.errors.push(`Row ${i + 1}: ${error instanceof Error ? error.message : "Unknown error"}`);
-      }
-    }
-    return importResults;
-  } catch (error) {
-    console.error("Error importing expenses from Excel:", error);
-    throw error;
-  }
-}
-
-// server/authProvider.ts
-import { ConfidentialClientApplication, CryptoProvider } from "@azure/msal-node";
-
-// server/authConfig.ts
-var msalConfig = {
+// server/azure-auth.ts
+import { ConfidentialClientApplication } from "@azure/msal-node";
+import { Client } from "@microsoft/microsoft-graph-client";
+var clientConfig = {
   auth: {
-    clientId: process.env.AZURE_CLIENT_ID || "",
-    authority: `${process.env.AZURE_CLOUD_INSTANCE || "https://login.microsoftonline.com/"}${process.env.AZURE_TENANT_ID || ""}`,
-    clientSecret: process.env.AZURE_CLIENT_SECRET || ""
+    clientId: process.env.AZURE_CLIENT_ID,
+    clientSecret: process.env.AZURE_CLIENT_SECRET,
+    authority: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`
   },
   system: {
     loggerOptions: {
-      loggerCallback(level, message, containsPii) {
+      loggerCallback: (level, message, containsPii) => {
         if (!containsPii) {
-          console.log(`[MSAL] ${message}`);
+          console.log(message);
         }
       },
       piiLoggingEnabled: false,
       logLevel: 3
+      // Info level
     }
   }
 };
-var REDIRECT_URI = process.env.AZURE_REDIRECT_URI || "https://ce024f68-a4f6-43ef-bf2b-5a8963f12ae5-00-ptzzz2z0tnld.riker.replit.dev/auth/redirect";
-var POST_LOGOUT_REDIRECT_URI = process.env.AZURE_POST_LOGOUT_REDIRECT_URI || "https://ce024f68-a4f6-43ef-bf2b-5a8963f12ae5-00-ptzzz2z0tnld.riker.replit.dev";
-var SCOPES = ["user.read"];
-
-// server/authProvider.ts
-import axios from "axios";
-var AuthProvider = class {
-  msalInstance;
-  cryptoProvider;
-  constructor() {
-    this.msalInstance = new ConfidentialClientApplication(msalConfig);
-    this.cryptoProvider = new CryptoProvider();
-  }
-  login(options = {}) {
-    return async (req, res, next) => {
-      try {
-        const state = this.cryptoProvider.base64Encode(
-          JSON.stringify({
-            successRedirect: options.successRedirect || "/dashboard"
-          })
-        );
-        const authCodeUrlRequestParams = {
-          state,
-          scopes: SCOPES,
-          redirectUri: REDIRECT_URI
-        };
-        const authCodeUrl = await this.msalInstance.getAuthCodeUrl(authCodeUrlRequestParams);
-        res.redirect(authCodeUrl);
-      } catch (error) {
-        console.error("Auth login error:", error);
-        next(error);
+var msalInstance = new ConfidentialClientApplication(clientConfig);
+function getGraphClient(accessToken) {
+  return Client.init({
+    authProvider: (done) => {
+      done(null, accessToken);
+    }
+  });
+}
+async function getAuthUrl() {
+  const redirectUri = process.env.AZURE_REDIRECT_URI || `http://localhost:5002/auth/redirect`;
+  console.log("Debug - FORCED redirectUri:", redirectUri);
+  const authCodeUrlRequest = {
+    scopes: ["user.read", "openid", "profile", "email"],
+    redirectUri
+  };
+  const authUrl = await msalInstance.getAuthCodeUrl(authCodeUrlRequest);
+  console.log("Debug - Generated Auth URL:", authUrl);
+  return authUrl;
+}
+async function handleCallback(code) {
+  try {
+    const redirectUri = process.env.AZURE_REDIRECT_URI || `http://localhost:5002/auth/redirect`;
+    const tokenRequest = {
+      code,
+      scopes: ["user.read", "openid", "profile", "email"],
+      redirectUri
+    };
+    const response = await msalInstance.acquireTokenByCode(tokenRequest);
+    if (!response) {
+      throw new Error("Failed to acquire token");
+    }
+    const graphClient = getGraphClient(response.accessToken);
+    const user = await graphClient.api("/me").get();
+    return {
+      accessToken: response.accessToken,
+      user: {
+        id: user.id,
+        email: user.userPrincipalName || user.mail,
+        firstName: user.givenName,
+        lastName: user.surname,
+        displayName: user.displayName
       }
     };
+  } catch (error) {
+    console.error("Azure auth error:", error);
+    throw error;
   }
-  async completeAuth(req, res, next) {
+}
+async function ensureUserExists(req, res, next) {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ message: "No user found in session" });
+    }
+    const user = await storage.getUser(req.user.id);
+    if (!user) {
+      return res.status(401).json({ message: "User not found in system" });
+    }
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error("User verification error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// server/routes.ts
+function requireAuth(req, res, next) {
+  if (!req.isAuthenticated() || !req.user) {
+    return res.status(401).json({ message: "Authentication required" });
+  }
+  next();
+}
+function requireRole(...allowedRoles) {
+  return (req, res, next) => {
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
+    }
+    next();
+  };
+}
+async function registerRoutes(app2) {
+  setupAuth(app2);
+  app2.get("/api/auth/azure", async (req, res) => {
     try {
-      if (!req.query.code || !req.query.state) {
-        return res.status(400).send("Missing code or state parameter");
-      }
-      const state = JSON.parse(this.cryptoProvider.base64Decode(req.query.state));
-      const authCodeRequest = {
-        code: req.query.code,
-        scopes: SCOPES,
-        redirectUri: REDIRECT_URI,
-        state: req.query.state
-      };
-      console.log("authCodeRequest", authCodeRequest);
-      const response = await this.msalInstance.acquireTokenByCode(authCodeRequest);
-      const userInfo = await axios.get("https://graph.microsoft.com/v1.0/me", {
-        headers: {
-          "Authorization": `Bearer ${response.accessToken}`
-        }
-      });
-      const azureUser = userInfo.data;
-      let user = await storage.getUserByAzureObjectId(azureUser.id);
+      const authUrl = await getAuthUrl();
+      res.redirect(authUrl);
+    } catch (error) {
+      console.error("Azure auth error:", error);
+      res.status(500).json({ message: "Failed to initiate Azure authentication" });
+    }
+  });
+  app2.get("/auth/redirect", async (req, res) => {
+    try {
+      const code = req.query.code;
+      if (!code) return res.status(400).send("No code provided by Azure");
+      const authResult = await handleCallback(code);
+      const azureUser = authResult.user;
+      const user = await storage.getUserByEmail(azureUser.email);
       if (!user) {
-        const email = azureUser.mail || azureUser.userPrincipalName;
-        user = await storage.getUserByEmail(email);
-        if (user) {
-          if (!user.isActive) {
-            return res.status(403).json({
-              error: "Your account is not active. Please contact the administrator."
-            });
-          }
-          user = await storage.updateUser(user.id, {
-            azureObjectId: azureUser.id,
-            name: azureUser.displayName
-            // Update name from Azure
+        return res.status(403).send("User not registered in the system");
+      }
+      req.login(user, (err) => {
+        if (err) return res.status(500).send("Login failed");
+        if (user.role === "manager") res.redirect("/manager");
+        else if (user.role === "hr") res.redirect("/hr");
+        else res.redirect("/");
+      });
+    } catch (error) {
+      console.error("Azure callback error:", error);
+      res.status(500).send("Authentication failed");
+    }
+  });
+  app2.get("/api/auth/callback", async (req, res) => {
+    try {
+      const { code } = req.query;
+      if (!code || typeof code !== "string") {
+        return res.status(400).json({ message: "Authorization code missing" });
+      }
+      const authResult = await handleCallback(code);
+      const azureUser = authResult.user;
+      let user = await storage.getUserByEmail(azureUser.email);
+      if (!user) {
+        if (azureUser.email === "navalika@fdestech.com") {
+          user = await storage.createUser({
+            employeeId: "MGR002",
+            username: azureUser.firstName.toLowerCase() + "." + azureUser.lastName.toLowerCase(),
+            firstName: azureUser.firstName,
+            lastName: azureUser.lastName,
+            email: azureUser.email,
+            designation: "Manager",
+            department: "Management",
+            role: "manager",
+            password: "azure-auth"
+            // Placeholder since we're using Azure auth
           });
         } else {
           return res.status(403).json({
-            error: "Access denied. Your email is not authorized. Please contact the administrator to request access."
-          });
-        }
-      } else {
-        if (!user.isActive) {
-          return res.status(403).json({
-            error: "Your account is not active. Please contact the administrator."
+            message: "User not found in system. Please contact your administrator."
           });
         }
       }
-      if (!user) {
-        return res.status(500).json({ error: "Authentication failed" });
-      }
-      await storage.updateUserLastLogin(user.id);
-      req.session.accessToken = response.accessToken;
-      req.session.idToken = response.idToken;
-      req.session.account = response.account;
-      req.session.isAuthenticated = true;
-      req.session.user = user;
-      res.redirect(state.successRedirect);
-    } catch (error) {
-      console.error("Auth completion error:", error);
-      next(error);
-    }
-  }
-  logout() {
-    return (req, res) => {
-      const logoutUri = `${msalConfig.auth.authority}/oauth2/v2.0/logout?post_logout_redirect_uri=${POST_LOGOUT_REDIRECT_URI}`;
-      req.session.destroy((err) => {
+      req.login(user, (err) => {
         if (err) {
-          console.error("Session destroy error:", err);
+          console.error("Login error:", err);
+          return res.status(500).json({ message: "Login failed" });
         }
-        res.redirect(logoutUri);
+        if (user.role === "manager") {
+          res.redirect("/manager");
+        } else if (user.role === "hr") {
+          res.redirect("/hr");
+        } else {
+          res.redirect("/");
+        }
       });
-    };
-  }
-  requireAuth() {
-    return (req, res, next) => {
-      if (req.session.isAuthenticated && req.session.user) {
-        return next();
-      } else {
-        return res.status(401).json({ error: "Authentication required" });
-      }
-    };
-  }
-  requireAdmin() {
-    return (req, res, next) => {
-      if (req.session.isAuthenticated && req.session.user?.role === "admin") {
-        return next();
-      } else {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-    };
-  }
-  getUser() {
-    return (req, res, next) => {
-      if (req.session.user) {
-        req.user = req.session.user;
-      }
-      next();
-    };
-  }
-};
-var authProvider = new AuthProvider();
-
-// server/authRoutes.ts
-import express from "express";
-var router = express.Router();
-router.get("/signin", authProvider.login({
-  successRedirect: "/dashboard"
-}));
-router.get("/redirect", async (req, res, next) => {
-  await authProvider.completeAuth(req, res, next);
-});
-router.get("/signout", authProvider.logout());
-router.get("/me", authProvider.requireAuth(), (req, res) => {
-  res.json(req.session.user);
-});
-var authRoutes_default = router;
-
-// server/userRoutes.ts
-import express2 from "express";
-var router2 = express2.Router();
-router2.get("/", authProvider.requireAdmin(), async (req, res) => {
-  try {
-    const users2 = await storage.getUsers();
-    res.json(users2);
-  } catch (error) {
-    console.error("Error fetching users:", error);
-    res.status(500).json({ error: "Failed to fetch users" });
-  }
-});
-router2.post("/", authProvider.requireAdmin(), async (req, res) => {
-  try {
-    const userData = insertUserSchema.omit({ id: true, createdAt: true, updatedAt: true, azureObjectId: true, lastLoginAt: true }).parse(req.body);
-    const user = await storage.createUser(userData);
-    res.status(201).json(user);
-  } catch (error) {
-    console.error("Error creating user:", error);
-    res.status(400).json({ error: "Failed to create user" });
-  }
-});
-router2.get("/:id", authProvider.requireAdmin(), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const user = await storage.getUserById(id);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    res.json(user);
-  } catch (error) {
-    console.error("Error fetching user:", error);
-    res.status(500).json({ error: "Failed to fetch user" });
-  }
-});
-router2.put("/:id", authProvider.requireAdmin(), async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (id === req.session.user?.id && req.body.role === "user") {
-      return res.status(400).json({ error: "Cannot demote yourself from admin role" });
-    }
-    const userData = updateUserSchema.partial().parse(req.body);
-    const user = await storage.updateUser(id, userData);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    res.json(user);
-  } catch (error) {
-    console.error("Error updating user:", error);
-    res.status(400).json({ error: "Failed to update user" });
-  }
-});
-router2.patch("/:id/status", authProvider.requireAdmin(), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { isActive } = req.body;
-    if (id === req.session.user?.id && !isActive) {
-      return res.status(400).json({ error: "Cannot deactivate your own account" });
-    }
-    const user = await storage.updateUser(id, { isActive });
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    res.json(user);
-  } catch (error) {
-    console.error("Error updating user status:", error);
-    res.status(500).json({ error: "Failed to update user status" });
-  }
-});
-router2.delete("/:id", authProvider.requireAdmin(), async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (id === req.session.user?.id) {
-      return res.status(400).json({ error: "Cannot delete your own account" });
-    }
-    const success = await storage.deleteUser(id);
-    if (!success) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    res.status(204).send();
-  } catch (error) {
-    console.error("Error deleting user:", error);
-    res.status(500).json({ error: "Failed to delete user" });
-  }
-});
-var userRoutes_default = router2;
-
-// server/routes.ts
-import path from "path";
-async function registerRoutes(app2) {
-  app2.use("/auth", authRoutes_default);
-  app2.use("/api/users", userRoutes_default);
-  app2.use("/api", authProvider.requireAuth());
-  app2.get("/api/categories", async (req, res) => {
-    try {
-      const categories2 = await storage.getCategories();
-      res.json(categories2);
     } catch (error) {
-      console.error("Error fetching categories:", error);
-      res.status(500).json({ error: "Failed to fetch categories" });
+      console.error("Azure callback error:", error);
+      res.status(500).json({ message: "Authentication failed" });
     }
   });
-  app2.post("/api/categories", async (req, res) => {
+  app2.get("/api/users", requireAuth, ensureUserExists, requireRole("hr", "manager"), async (req, res) => {
     try {
-      const categoryData = insertCategorySchema.parse(req.body);
-      const category = await storage.createCategory(categoryData);
-      res.status(201).json(category);
+      const users2 = await storage.getAllUsers();
+      const sanitizedUsers = users2.map((user) => {
+        const { password, ...publicUser } = user;
+        return publicUser;
+      });
+      res.json(sanitizedUsers);
     } catch (error) {
-      console.error("Error creating category:", error);
-      res.status(400).json({ error: "Failed to create category" });
+      res.status(500).json({ message: "Failed to fetch users" });
     }
   });
-  app2.put("/api/categories/:id", async (req, res) => {
+  app2.post("/api/users", requireAuth, ensureUserExists, requireRole("manager"), async (req, res) => {
+    try {
+      const validatedData = insertUserSchema.parse(req.body);
+      const user = await storage.createUser(validatedData);
+      const { password, ...publicUser } = user;
+      res.json(publicUser);
+    } catch (error) {
+      if (error instanceof z2.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create user" });
+    }
+  });
+  app2.put("/api/users/:id", requireAuth, ensureUserExists, requireRole("manager"), async (req, res) => {
     try {
       const { id } = req.params;
-      const categoryData = insertCategorySchema.partial().parse(req.body);
-      const category = await storage.updateCategory(id, categoryData);
-      if (!category) {
-        return res.status(404).json({ error: "Category not found" });
+      const updateData = { ...req.body };
+      delete updateData.id;
+      if ((updateData.firstName || updateData.lastName) && !updateData.username) {
+        const existingUser = await storage.getUser(id);
+        if (existingUser) {
+          const firstName = updateData.firstName || existingUser.firstName;
+          const lastName = updateData.lastName || existingUser.lastName;
+          updateData.username = `${firstName.toLowerCase()}.${lastName.toLowerCase()}`;
+        }
       }
-      res.json(category);
+      delete updateData.password;
+      const updatedUser = await storage.updateUser(id, updateData);
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      const { password, ...publicUser } = updatedUser;
+      res.json(publicUser);
     } catch (error) {
-      console.error("Error updating category:", error);
-      res.status(400).json({ error: "Failed to update category" });
+      res.status(500).json({ message: "Failed to update user" });
     }
   });
-  app2.delete("/api/categories/:id", async (req, res) => {
+  app2.delete("/api/users/:id", requireAuth, ensureUserExists, requireRole("manager"), async (req, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteCategory(id);
-      if (!success) {
-        return res.status(404).json({ error: "Category not found" });
+      if (req.user.id === id) {
+        return res.status(400).json({ message: "Cannot delete your own account" });
       }
-      res.status(204).send();
-    } catch (error) {
-      console.error("Error deleting category:", error);
-      res.status(500).json({ error: "Failed to delete category" });
-    }
-  });
-  app2.get("/api/expense-wallets", async (req, res) => {
-    try {
-      const expenseWallets2 = await storage.getExpenseWallets();
-      res.json(expenseWallets2);
-    } catch (error) {
-      console.error("Error fetching expense wallets:", error);
-      res.status(500).json({ error: "Failed to fetch expense wallets" });
-    }
-  });
-  app2.get("/api/current-expense-wallet", async (req, res) => {
-    try {
-      const currentWallet = await storage.getCurrentExpenseWallet();
-      if (!currentWallet) {
-        return res.status(404).json({ error: "No expense wallet found" });
+      const deleted = await storage.deleteUser(id);
+      if (!deleted) {
+        return res.status(404).json({ message: "User not found" });
       }
-      res.json(currentWallet);
+      res.json({ message: "User deleted successfully" });
     } catch (error) {
-      console.error("Error fetching current expense wallet:", error);
-      res.status(500).json({ error: "Failed to fetch current expense wallet" });
-    }
-  });
-  app2.post("/api/expense-wallets", async (req, res) => {
-    try {
-      const walletData = insertExpenseWalletSchema.parse(req.body);
-      const expenseWallet = await storage.createExpenseWallet(walletData);
-      res.status(201).json(expenseWallet);
-    } catch (error) {
-      console.error("Error creating expense wallet:", error);
-      res.status(400).json({ error: "Failed to create expense wallet" });
-    }
-  });
-  app2.put("/api/expense-wallets/:id", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const walletData = insertExpenseWalletSchema.partial().parse(req.body);
-      const expenseWallet = await storage.updateExpenseWallet(id, walletData);
-      if (!expenseWallet) {
-        return res.status(404).json({ error: "Expense wallet not found" });
+      if (error.message === "Cannot delete the last manager user") {
+        return res.status(400).json({ message: error.message });
       }
-      res.json(expenseWallet);
-    } catch (error) {
-      console.error("Error updating expense wallet:", error);
-      res.status(400).json({ error: "Failed to update expense wallet" });
+      res.status(500).json({ message: "Failed to delete user" });
     }
   });
-  app2.get("/api/expenses", async (req, res) => {
+  app2.post("/api/work-entries", requireAuth, async (req, res) => {
     try {
-      const {
-        search,
-        categoryId,
-        startDate,
-        endDate,
-        minAmount,
-        maxAmount,
-        sortBy = "date",
-        sortOrder = "desc",
-        limit = "50",
-        offset = "0"
-      } = req.query;
+      const validatedData = insertWorkEntrySchema.parse(req.body);
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const requestedDate = validatedData.date;
+      let isAllowedDate = requestedDate === today;
+      if (!isAllowedDate) {
+        const approvedRequests = await storage.getWorkHourRequestsByEmployeeId(req.user.id);
+        const approvedDates = approvedRequests.filter((request) => request.status === "approved").map((request) => request.requestedDate);
+        isAllowedDate = approvedDates.includes(requestedDate);
+      }
+      if (!isAllowedDate) {
+        return res.status(400).json({
+          message: "You can only create work entries for today's date or approved work hour request dates"
+        });
+      }
+      const existingEntries = await storage.getWorkEntriesByUserIdWithFilters({
+        userId: req.user.id,
+        startDate: requestedDate,
+        endDate: requestedDate
+      });
+      if (existingEntries.length > 0) {
+        return res.status(400).json({
+          message: "A work entry already exists for this date"
+        });
+      }
+      const workEntry = await storage.createWorkEntry({
+        ...validatedData,
+        userId: req.user.id
+      });
+      res.json(workEntry);
+    } catch (error) {
+      if (error instanceof z2.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create work entry" });
+    }
+  });
+  app2.get("/api/work-entries/my", requireAuth, async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
       const filters = {
-        search,
-        categoryId,
+        userId: req.user.id,
         startDate,
-        endDate,
-        minAmount: minAmount ? parseFloat(minAmount) : void 0,
-        maxAmount: maxAmount ? parseFloat(maxAmount) : void 0
+        endDate
       };
-      Object.keys(filters).forEach((key) => {
-        if (filters[key] === void 0 || filters[key] === "") {
-          delete filters[key];
-        }
+      const entries = await storage.getWorkEntriesByUserIdWithFilters(filters);
+      res.json(entries);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch work entries" });
+    }
+  });
+  app2.get("/api/work-entries", requireAuth, requireRole("hr", "manager"), async (req, res) => {
+    try {
+      const { userId, department, status, startDate, endDate } = req.query;
+      const filters = {
+        userId,
+        department,
+        status,
+        startDate,
+        endDate
+      };
+      const entries = await storage.getWorkEntriesByFilters(filters);
+      res.json(entries);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch work entries" });
+    }
+  });
+  app2.patch("/api/work-entries/:id/status", requireAuth, requireRole("hr", "manager"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const validatedData = updateWorkEntryStatusSchema.parse(req.body);
+      const entry = await storage.updateWorkEntryStatus(id, validatedData.status, req.user.id);
+      if (!entry) {
+        return res.status(404).json({ message: "Work entry not found" });
+      }
+      res.json(entry);
+    } catch (error) {
+      if (error instanceof z2.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update work entry status" });
+    }
+  });
+  app2.delete("/api/work-entries/:id", requireAuth, requireRole("hr", "manager"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.deleteWorkEntry(id);
+      if (!success) {
+        return res.status(404).json({ message: "Work entry not found" });
+      }
+      res.json({ message: "Work entry deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete work entry" });
+    }
+  });
+  app2.get("/api/users/:userId/daily-report/:date", requireAuth, async (req, res) => {
+    try {
+      const { userId, date } = req.params;
+      if (userId !== req.user.id && !["hr", "manager"].includes(req.user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const report = await storage.getDailyWorkReport(userId, date);
+      res.json(report);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch daily work report" });
+    }
+  });
+  app2.post("/api/timesheets", requireAuth, async (req, res) => {
+    try {
+      const validatedData = insertWorkEntrySchema.parse(req.body);
+      const entry = await storage.createTimesheet({
+        ...validatedData,
+        userId: req.user.id
       });
-      const expenses2 = await storage.getExpenses(
-        Object.keys(filters).length > 0 ? filters : void 0,
-        sortBy,
-        sortOrder,
-        parseInt(limit),
-        parseInt(offset)
-      );
-      const totalCount = await storage.getExpensesCount(
-        Object.keys(filters).length > 0 ? filters : void 0
-      );
+      res.json(entry);
+    } catch (error) {
+      if (error instanceof z2.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create timesheet" });
+    }
+  });
+  app2.get("/api/timesheets/my", requireAuth, async (req, res) => {
+    try {
+      const timesheets = await storage.getTimesheetsByUserId(req.user.id);
+      res.json(timesheets);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch timesheets" });
+    }
+  });
+  app2.get("/api/timesheets", requireAuth, requireRole("hr", "manager"), async (req, res) => {
+    try {
+      const { userId, department, status, startDate, endDate } = req.query;
+      const filters = {
+        userId,
+        department,
+        status,
+        startDate,
+        endDate
+      };
+      const timesheets = await storage.getTimesheetsByFilters(filters);
+      res.json(timesheets);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch timesheets" });
+    }
+  });
+  app2.patch("/api/timesheets/:id/status", requireAuth, requireRole("hr", "manager"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const validatedData = updateWorkEntryStatusSchema.parse(req.body);
+      const timesheet = await storage.updateTimesheetStatus(id, validatedData.status, req.user.id);
+      if (!timesheet) {
+        return res.status(404).json({ message: "Timesheet not found" });
+      }
+      res.json(timesheet);
+    } catch (error) {
+      if (error instanceof z2.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update timesheet status" });
+    }
+  });
+  app2.delete("/api/timesheets/:id", requireAuth, requireRole("hr", "manager"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.deleteTimesheet(id);
+      if (!success) {
+        return res.status(404).json({ message: "Timesheet not found" });
+      }
+      res.json({ message: "Timesheet deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete timesheet" });
+    }
+  });
+  app2.get("/api/stats", requireAuth, async (req, res) => {
+    try {
+      if (req.user.role === "hr" || req.user.role === "manager") {
+        const allEntries = await storage.getAllWorkEntries();
+        const allUsers = await storage.getAllUsers();
+        const employees = allUsers.filter((u) => u.role === "employee");
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const employeesWithTodayEntries = /* @__PURE__ */ new Set();
+        allEntries.forEach((entry) => {
+          if (entry.date === today) {
+            employeesWithTodayEntries.add(entry.userId);
+          }
+        });
+        const submittedToday = employeesWithTodayEntries.size;
+        const notSubmittedToday = employees.length - submittedToday;
+        const totalHours = allEntries.reduce((sum, e) => sum + parseFloat(e.timeSpent), 0);
+        const avgHours = totalHours / allEntries.length || 0;
+        res.json({
+          totalEmployees: employees.length,
+          totalEntries: allEntries.length,
+          totalHours: totalHours.toFixed(1),
+          avgHours: avgHours.toFixed(1),
+          submittedToday,
+          notSubmittedToday
+        });
+      } else {
+        const entries = await storage.getWorkEntriesByUserId(req.user.id);
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const startOfWeek = /* @__PURE__ */ new Date();
+        startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+        const startOfMonth = new Date((/* @__PURE__ */ new Date()).getFullYear(), (/* @__PURE__ */ new Date()).getMonth(), 1);
+        const todayHours = entries.filter((e) => e.date === today).reduce((sum, e) => sum + parseFloat(e.timeSpent), 0);
+        const weekHours = entries.filter((e) => new Date(e.date) >= startOfWeek).reduce((sum, e) => sum + parseFloat(e.timeSpent), 0);
+        const monthHours = entries.filter((e) => new Date(e.date) >= startOfMonth).reduce((sum, e) => sum + parseFloat(e.timeSpent), 0);
+        res.json({
+          todayHours: todayHours.toFixed(1),
+          weekHours: weekHours.toFixed(1),
+          monthHours: monthHours.toFixed(1),
+          status: "On Track"
+        });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch statistics" });
+    }
+  });
+  app2.get("/api/work-entries/export", requireAuth, requireRole("hr", "manager"), async (req, res) => {
+    try {
+      const { format, ...filters } = req.query;
+      const entries = await storage.getWorkEntriesByFilters(filters);
+      if (format === "csv") {
+        const csvHeaders = "Employee ID,Employee,Date,Work Type,Description,Time Spent,Status\n";
+        const csvRows = entries.map(
+          (e) => `"${e.user.employeeId}","${e.user.firstName} ${e.user.lastName}","${e.date}","${e.workType}","${e.description}","${e.timeSpent}","${e.status}"`
+        ).join("\n");
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", 'attachment; filename="work-entries.csv"');
+        res.send(csvHeaders + csvRows);
+      } else {
+        res.json(entries);
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to export work entries" });
+    }
+  });
+  app2.get("/api/timesheets/export", requireAuth, requireRole("hr", "manager"), async (req, res) => {
+    try {
+      const { format, ...filters } = req.query;
+      const timesheets = await storage.getTimesheetsByFilters(filters);
+      if (format === "csv") {
+        const csvHeaders = "Employee,Date,Work Type,Description,Time Spent,Status\n";
+        const csvRows = timesheets.map(
+          (t) => `"${t.user.firstName} ${t.user.lastName}","${t.date}","${t.workType}","${t.description}","${t.timeSpent}","${t.status}"`
+        ).join("\n");
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", 'attachment; filename="timesheets.csv"');
+        res.send(csvHeaders + csvRows);
+      } else {
+        res.json(timesheets);
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to export timesheets" });
+    }
+  });
+  app2.get("/api/manager-dashboard-stats", requireAuth, requireRole("manager"), async (req, res) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      const employees = allUsers.filter((user) => user.role === "employee");
+      const allEntries = await storage.getAllWorkEntries();
+      const totalEmployees = employees.length;
+      const today = /* @__PURE__ */ new Date();
+      const todayStr = today.toISOString().split("T")[0];
+      const todayEntries = allEntries.filter((entry) => entry.date === todayStr);
+      const employeesWithEntriesToday = new Set(todayEntries.map((entry) => entry.userId));
+      const submitted = employeesWithEntriesToday.size;
+      const notSubmitted = totalEmployees - submitted;
+      const totalWorkHoursToday = todayEntries.reduce((sum, entry) => sum + parseFloat(entry.timeSpent), 0);
       res.json({
-        expenses: expenses2,
-        totalCount,
-        hasMore: parseInt(offset) + expenses2.length < totalCount
+        totalEmployees,
+        submitted,
+        notSubmitted,
+        totalWorkHours: totalWorkHoursToday.toFixed(1)
       });
     } catch (error) {
-      console.error("Error fetching expenses:", error);
-      res.status(500).json({ error: "Failed to fetch expenses" });
+      console.error("Manager dashboard stats error:", error);
+      res.status(500).json({ message: "Failed to fetch manager dashboard statistics" });
     }
   });
-  app2.get("/api/expenses/:id", async (req, res) => {
+  app2.get("/api/manager-preferences", requireAuth, requireRole("manager"), async (req, res) => {
     try {
-      const { id } = req.params;
-      const expense = await storage.getExpenseById(id);
-      if (!expense) {
-        return res.status(404).json({ error: "Expense not found" });
+      const preferences = await storage.getManagerPreferences(req.user.id);
+      if (preferences) {
+        const selectedEmployeeIds = JSON.parse(preferences.selectedEmployeeIds);
+        res.json({ ...preferences, selectedEmployeeIds });
+      } else {
+        res.json({ selectedEmployeeIds: [] });
       }
-      res.json(expense);
     } catch (error) {
-      console.error("Error fetching expense:", error);
-      res.status(500).json({ error: "Failed to fetch expense" });
+      res.status(500).json({ message: "Failed to fetch manager preferences" });
     }
   });
-  app2.post("/api/expenses", async (req, res) => {
+  app2.post("/api/manager-preferences", requireAuth, requireRole("manager"), async (req, res) => {
     try {
-      const expenseData = insertExpenseSchema.parse(req.body);
-      const expense = await storage.createExpense(expenseData);
-      res.status(201).json(expense);
-    } catch (error) {
-      console.error("Error creating expense:", error);
-      res.status(400).json({ error: "Failed to create expense" });
-    }
-  });
-  app2.put("/api/expenses/:id", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const expenseData = updateExpenseSchema.parse({ ...req.body, id });
-      const expense = await storage.updateExpense(id, expenseData);
-      if (!expense) {
-        return res.status(404).json({ error: "Expense not found" });
+      const { selectedEmployeeIds } = req.body;
+      if (!Array.isArray(selectedEmployeeIds)) {
+        return res.status(400).json({ message: "selectedEmployeeIds must be an array" });
       }
-      res.json(expense);
+      const preferences = await storage.updateManagerPreferences(req.user.id, selectedEmployeeIds);
+      res.json({ ...preferences, selectedEmployeeIds: JSON.parse(preferences.selectedEmployeeIds) });
     } catch (error) {
-      console.error("Error updating expense:", error);
-      res.status(400).json({ error: "Failed to update expense" });
+      res.status(500).json({ message: "Failed to save manager preferences" });
     }
   });
-  app2.delete("/api/expenses/:id", async (req, res) => {
+  app2.post("/api/work-hour-requests", requireAuth, requireRole("employee"), async (req, res) => {
     try {
-      const { id } = req.params;
-      const success = await storage.deleteExpense(id);
-      if (!success) {
-        return res.status(404).json({ error: "Expense not found" });
-      }
-      res.status(204).send();
-    } catch (error) {
-      console.error("Error deleting expense:", error);
-      res.status(500).json({ error: "Failed to delete expense" });
-    }
-  });
-  app2.get("/api/analytics/wallet-summary", async (req, res) => {
-    try {
-      const summary = await storage.getWalletSummary();
-      res.json(summary);
-    } catch (error) {
-      console.error("Error fetching wallet summary:", error);
-      res.status(500).json({ error: "Failed to fetch wallet summary" });
-    }
-  });
-  app2.get("/api/analytics/budget-summary/:month/:year", async (req, res) => {
-    try {
-      console.log("budget summary");
-      const { month, year } = req.params;
-      const monthNum = parseInt(month);
-      const yearNum = parseInt(year);
-      if (isNaN(monthNum) || isNaN(yearNum) || monthNum < 1 || monthNum > 12) {
-        return res.status(400).json({ error: "Invalid month or year parameter" });
-      }
-      const summary = await storage.getWalletSummaryForMonth(monthNum, yearNum);
-      console.log(summary);
-      res.json(summary);
-    } catch (error) {
-      console.error("Error fetching budget summary:", error);
-      res.status(500).json({ error: "Failed to fetch budget summary" });
-    }
-  });
-  app2.get("/api/analytics/category-breakdown", async (req, res) => {
-    try {
-      const { month, year } = req.query;
-      const monthNum = month ? parseInt(month) : void 0;
-      const yearNum = year ? parseInt(year) : void 0;
-      const breakdown = await storage.getCategoryBreakdown(monthNum, yearNum);
-      res.json(breakdown);
-    } catch (error) {
-      console.error("Error fetching category breakdown:", error);
-      res.status(500).json({ error: "Failed to fetch category breakdown" });
-    }
-  });
-  app2.get("/api/analytics/expense-trends/:days", async (req, res) => {
-    try {
-      const days = parseInt(req.params.days);
-      if (isNaN(days) || days < 1) {
-        return res.status(400).json({ error: "Invalid days parameter" });
-      }
-      const trends = await storage.getExpenseTrends(days);
-      res.json(trends);
-    } catch (error) {
-      console.error("Error fetching expense trends:", error);
-      res.status(500).json({ error: "Failed to fetch expense trends" });
-    }
-  });
-  app2.get("/api/analytics/expense-trends-monthly/:months", async (req, res) => {
-    try {
-      const months = parseInt(req.params.months);
-      if (isNaN(months) || months < 1) {
-        return res.status(400).json({ error: "Invalid months parameter" });
-      }
-      const trends = await storage.getMonthlyExpenseTrends(months);
-      res.json(trends);
-    } catch (error) {
-      console.error("Error fetching monthly expense trends:", error);
-      res.status(500).json({ error: "Failed to fetch monthly expense trends" });
-    }
-  });
-  app2.get("/api/export/csv", async (req, res) => {
-    try {
-      const {
-        search,
-        categoryId,
-        startDate,
-        endDate,
-        minAmount,
-        maxAmount
-      } = req.query;
-      const filters = {
-        search,
-        categoryId,
-        startDate,
-        endDate,
-        minAmount: minAmount ? parseFloat(minAmount) : void 0,
-        maxAmount: maxAmount ? parseFloat(maxAmount) : void 0
-      };
-      Object.keys(filters).forEach((key) => {
-        if (filters[key] === void 0 || filters[key] === "") {
-          delete filters[key];
-        }
-      });
-      const expenses2 = await storage.getExpenses(
-        Object.keys(filters).length > 0 ? filters : void 0,
-        "date",
-        "desc",
-        999999,
-        // Get all expenses for export
-        0
+      const validatedData = insertWorkHourRequestSchema.parse(req.body);
+      const existingRequests = await storage.getWorkHourRequestsByEmployeeId(req.user.id);
+      const duplicateRequest = existingRequests.find(
+        (request2) => request2.requestedDate === validatedData.requestedDate && request2.status === "pending"
       );
-      const csvData = [
-        ["Date", "Description", "Category", "Vendor", "Amount", "Notes"].join(","),
-        ...expenses2.map((expense) => [
-          new Date(expense.date).toLocaleDateString(),
-          `"${expense.description.replace(/"/g, '""')}"`,
-          expense.category ? `"${expense.category.name.replace(/"/g, '""')}"` : "Uncategorized",
-          expense.vendor ? `"${expense.vendor.replace(/"/g, '""')}"` : "",
-          expense.amount,
-          expense.notes ? `"${expense.notes.replace(/"/g, '""')}"` : ""
-        ].join(","))
-      ].join("\n");
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", `attachment; filename="expenses-${(/* @__PURE__ */ new Date()).toISOString().split("T")[0]}.csv"`);
-      res.send(csvData);
-    } catch (error) {
-      console.error("Error exporting CSV:", error);
-      res.status(500).json({ error: "Failed to export CSV" });
-    }
-  });
-  app2.get("/objects/:objectPath(*)", authProvider.requireAuth(), async (req, res) => {
-    const objectStorageService = new ObjectStorageService();
-    try {
-      const objectFile = await objectStorageService.getObjectEntityFile(req.path);
-      objectStorageService.downloadObject(objectFile, res);
-    } catch (error) {
-      console.error("Error accessing object:", error);
-      if (error instanceof ObjectNotFoundError) {
-        return res.sendStatus(404);
+      if (duplicateRequest) {
+        return res.status(400).json({ message: "A request for this date is already pending" });
       }
-      return res.sendStatus(500);
-    }
-  });
-  app2.post("/api/objects/upload", async (req, res) => {
-    try {
-      const objectStorageService = new ObjectStorageService();
-      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
-      res.json({ uploadURL });
-    } catch (error) {
-      console.error("Error getting upload URL:", error);
-      res.status(500).json({ error: "Failed to get upload URL" });
-    }
-  });
-  app2.post("/api/expenses/import-excel", async (req, res) => {
-    try {
-      const { filePath } = req.body;
-      if (!filePath) {
-        return res.status(400).json({ error: "File path is required" });
+      const requestedDate = new Date(validatedData.requestedDate);
+      const today = /* @__PURE__ */ new Date();
+      today.setHours(0, 0, 0, 0);
+      if (requestedDate >= today) {
+        return res.status(400).json({ message: "Can only request work hours for past dates" });
       }
-      const fullPath = path.join(process.cwd(), filePath);
-      const results = await importExpensesFromExcel(fullPath);
-      res.json(results);
+      const request = await storage.createWorkHourRequest({
+        ...validatedData,
+        employeeId: req.user.id
+      });
+      res.json(request);
     } catch (error) {
-      console.error("Error importing Excel file:", error);
-      res.status(500).json({ error: "Failed to import Excel file", details: error instanceof Error ? error.message : "Unknown error" });
+      if (error instanceof z2.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create work hour request" });
+    }
+  });
+  app2.get("/api/work-hour-requests/my", requireAuth, requireRole("employee"), async (req, res) => {
+    try {
+      const requests = await storage.getWorkHourRequestsByEmployeeId(req.user.id);
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch work hour requests" });
+    }
+  });
+  app2.get("/api/work-hour-requests", requireAuth, requireRole("manager"), async (req, res) => {
+    try {
+      const requests = await storage.getWorkHourRequestsByManagerId(req.user.id);
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch work hour requests" });
+    }
+  });
+  app2.put("/api/work-hour-requests/:id", requireAuth, requireRole("manager"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const validatedData = updateWorkHourRequestSchema.parse(req.body);
+      const request = await storage.updateWorkHourRequest(id, {
+        status: validatedData.status,
+        managerId: req.user.id,
+        managerComments: validatedData.managerComments
+      });
+      if (!request) {
+        return res.status(404).json({ message: "Work hour request not found" });
+      }
+      res.json(request);
+    } catch (error) {
+      if (error instanceof z2.ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update work hour request" });
+    }
+  });
+  app2.get("/api/work-hour-requests/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const request = await storage.getWorkHourRequestById(id);
+      if (!request) {
+        return res.status(404).json({ message: "Work hour request not found" });
+      }
+      if (req.user.role === "employee" && request.employeeId !== req.user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      res.json(request);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch work hour request" });
     }
   });
   const httpServer = createServer(app2);
@@ -1528,7 +1226,7 @@ async function registerRoutes(app2) {
 }
 
 // server/vite.ts
-import express3 from "express";
+import express from "express";
 import fs from "fs";
 import path3 from "path";
 import { createServer as createViteServer, createLogger } from "vite";
@@ -1629,44 +1327,26 @@ function serveStatic(app2) {
       `Could not find the build directory: ${distPath}, make sure to build the client first`
     );
   }
-  app2.use(express3.static(distPath));
+  app2.use(express.static(distPath));
   app2.use("*", (_req, res) => {
     res.sendFile(path3.resolve(distPath, "index.html"));
   });
 }
 
 // server/index.ts
+import dotenv2 from "dotenv";
 dotenv2.config();
-var app = express4();
-app.use(express4.json());
-app.use(express4.urlencoded({ extended: false }));
-app.use(cors({
-  origin: process.env.FRONTEND_URL || "*",
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  credentials: true
-  // needed for cookies
-}));
-var PgSession = connectPgSimple(session);
-app.use(session({
-  store: new PgSession({
-    conString: process.env.DATABASE_URL,
-    tableName: "session",
-    createTableIfMissing: true
-  }),
-  secret: process.env.SESSION_SECRET || "fallback-secret-for-development",
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    maxAge: 24 * 60 * 60 * 1e3
-  }
-}));
+var app = express2();
+app.use(express2.json());
+app.use(express2.urlencoded({ extended: false }));
+app.use(express2.static(path.join(__dirname, "public")));
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public/index.html"));
+});
 app.use((req, res, next) => {
   const start = Date.now();
   const path4 = req.path;
-  let capturedJsonResponse;
+  let capturedJsonResponse = void 0;
   const originalResJson = res.json;
   res.json = function(bodyJson, ...args) {
     capturedJsonResponse = bodyJson;
@@ -1679,7 +1359,9 @@ app.use((req, res, next) => {
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
-      if (logLine.length > 80) logLine = logLine.slice(0, 79) + "\u2026";
+      if (logLine.length > 80) {
+        logLine = logLine.slice(0, 79) + "\u2026";
+      }
       log(logLine);
     }
   });
@@ -1690,18 +1372,16 @@ app.use((req, res, next) => {
   app.use((err, _req, res, _next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-    if (!res.headersSent) {
-      res.status(status).json({ message });
-    }
-    console.error(err);
+    res.status(status).json({ message });
+    throw err;
   });
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
     serveStatic(app);
   }
-  const port = Number(process.env.PORT) || 3e3;
-  app.listen(port, "0.0.0.0", () => {
-    console.log(`Server running on port ${port}`);
+  const port = process.env.PORT || 3e3;
+  app.listen(port, "localhost", () => {
+    console.log(`Server running on ${port}`);
   });
 })();
